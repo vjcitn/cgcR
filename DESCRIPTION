@@ -1,6 +1,6 @@
 Package: cgcR
 Title: NCI Cancer Genomics Cloud examples in R
-Version: 0.0.4
+Version: 0.0.5
 Authors@R: c(person("Sean", "Davis", email = "seandavi@gmail.com", role = c("aut", "cre")), 
   person("Durga", "Addepalli", email = "kanakadurga.addepalli@nih.gov", role = c("aut")), 
   person("Hsinyi", "Tsang", email = "hsinyi.tsang@nih.gov", role = c("aut")))

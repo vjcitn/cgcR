@@ -1,0 +1,165 @@
+---
+title: "ISB bigquery for TCGA: Some Bioconductor strategies"
+author: Vince Carey
+date: June 22, 2016
+output: html_document
+---
+
+
+## Road map
+- Basic overview on cancer genomics cloud approach to level 3 TCGA
+- BigQuery intro by doing
+- A bladder cancer CDK use case from ISB
+- An interactive oncoPrint
+- Exercises and commentary
+
+
+## Overview
+ 
+- TCGA is a collection of omics assay results and clinical characteristics of donors of tumor tissue on a wide variety of cancers
+- The public data has so far been a perennial source of logistical challenges for interested bioinformaticians
+    - Access is sufficiently complex to warrant several independently developed Bioconductor packages
+    - Coordination of data structures and vocabularies consumes significant effort
+- NCI Cancer Genomic Cloud pilots: "Democratize" access, federate management and analysis methods
+
+## The ISB Cancer Genomic Cloud Pilot: A way in via Google BigQuery
+
+You need an authentication token, 'my_billing' contains secret info
+```{r setup,echo=FALSE,results="hide"}
+suppressPackageStartupMessages({
+library(shiny)
+library(dplyr)
+library(bigrquery)
+library(DT)
+library(cgcR)
+library(png)
+library(grid)
+library(beeswarm)
+})
+```
+```{r lk1,eval=FALSE}
+getBQ = function () 
+{
+    library(dplyr)
+    library(bigrquery)
+    my_billing = <secret>
+    src_bigquery("isb-cgc", "tcga_201510_alpha", billing = my_billing)
+}
+```
+
+## Let's try it, dplyr idiom
+```{r lk2,eval=TRUE}
+bq = getBQ()
+bq
+```
+
+## Access now available for all tumor types
+
+```{r lk3,eval=TRUE,cache=TRUE}
+LUAD_Clin = bq %>% tbl("Clinical_data") %>% 
+      filter(Study=="LUAD") %>% as.data.frame()
+dim(LUAD_Clin)
+```
+- dplyr idiom is not necessary
+- `bigrquery query_exec()` will submit BigQuery-compliant SQL
+
+## Some variables (lots of NA, blanks)
+
+```{r lkdt,eval=TRUE}
+datatable(LUAD_Clin[,c(1,49,54)], options=list(lengthMenu=c(3,5)))
+```
+
+## Use case from ISB BigQuery walkthrough
+
+For bladder cancer patients that have mutations in the CDKN2A 
+(cyclin-dependent kinase inhibitor 2A) gene, what types 
+of mutations are they, what is their gender, vital status, and 
+days to death - and for 3 downstream genes (MDM2 (MDM2 proto-oncogene), 
+TP53 (tumor protein p53), CDKN1A (cyclin-dependent kinase 
+inhibitor 1A)), what are the gene expression levels for each patient?
+
+## Break it down
+
+- Bladder cancer: Study is BLCA
+- Mutation data: filter to CDKN2A and tabulate type
+- Clinical data: merge
+- Expression data: MDM2, TP53, CDKN1A on these patients
+
+## Mutations -- NB order of operations can affect timing/timeout
+
+```{r domu}
+mudf = bq %>% tbl("Somatic_Mutation_calls") %>% 
+  filter(Study=="BLCA") %>% filter(Hugo_Symbol == "CDKN2A") %>%
+  select(ParticipantBarcode, Study, Hugo_Symbol, 
+              Variant_Type, Variant_Classification) %>% 
+              as.data.frame()
+head(mudf,3)
+```
+
+## Expression
+
+```{r doex}
+exdf = bq %>% tbl("mRNA_UNC_HiSeq_RSEM") %>%
+  filter(Study=="BLCA") %>% filter(HGNC_gene_symbol 
+          %in% c("MDM2", "TP53", "CDKN2A", "CDKN1A")) %>%
+  select(ParticipantBarcode, Study, HGNC_gene_symbol, normalized_count) %>%
+              as.data.frame()
+```
+
+## Condense multiple CDKN2A mutations of the same type in an individual
+
+```{r cond}
+o = order(mudf$ParticipantBarcode, mudf$Variant_Classification)
+mudf = mudf[o,]
+cls = with(mudf, split(Variant_Classification, ParticipantBarcode))
+todrop = lapply(cls, duplicated)
+mudf = mudf[-which(unlist(todrop)),]
+```
+
+## Merge mutation and expression data
+
+```{r lkmu,fig=TRUE}
+muex = merge(mudf, exdf, by="ParticipantBarcode", all.x=TRUE)
+par(mar=c(12,5,3,3),las=2)
+with(muex[muex$HG=="MDM2",], 
+   beeswarm(split(log(normalized_count+1), Variant_Classification), 
+     ylab="log MDM2 norm. count"))
+```
+
+## Exercises
+- See the [walkthrough at ISB](http://isb-cancer-genomics-cloud.readthedocs.io/en/latest/sections/progapi/bigqueryGUI/WalkthroughOfGoogleBigQuery.html)
+- Write the BigQuery SQL to carry out the merge and use `query_exec` to verify that the R operations agree with the native operations
+- Merge the clinical data and test for an effect of CDKN2A mutation class on
+survival time distribution
+- Define and execute a test of the null hypothesis that the mean
+of (MDM2, TP53, CDKN1A) is constant over CDKN2A mutation classes
+- Generalize the computing framework for this test to allow free selection
+of upstream mutation carriers and downstream expression target patterns for any TCGA tumor family
+
+## Interactive oncoprint
+
+To achieve the following display, use
+```
+library(cgcR)
+bq = getBQ() # set your project properly
+isbApp(bq) # then pick LGG as the tumor to study
+```
+
+```{r lkd,fig=TRUE,echo=FALSE}
+im = readPNG("lggshot.png")
+grid.raster(im)
+```
+
+## Exercises
+- Add additional gene sets to the isbApp
+- Introduce a systematic approach to labeling mutation classes
+- Improve the heatmap tile generation/coding
+- Add hoverOver functionality so that relevant information on the sample is produced to help interpret mutation patterns -- might take a lot of transformation
+of code to ggvis or ggplot2/plotly/rbokeh
+
+## Comments
+- Clinical data curation still important
+- Molecular data quality assessment/QC still important
+- See `MultiAssayExperiment` package and TCGA archive in S3 bucket
+- Additional BigQuery project in ISB CGC: `ccle_201602_alpha` but
+lacks chemosensitivity profiles
