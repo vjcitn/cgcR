@@ -159,6 +159,7 @@ geneVecToOPInputByStudy = function(bq, genevec, studytag="LUAD") {
 }
 
 library(shiny)
+library(ComplexHeatmap)
 
 isbApp = function(bq) {
   gnsets = someSets
